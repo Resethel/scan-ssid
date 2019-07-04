@@ -1,0 +1,277 @@
+!/bin/bash
+#
+# This script parses the output of the cli command "iw dev <adapter> scan"
+# to determine all wi-fi networks that can be heard by an Ubuntu client. It
+# uses grep to parse/scrape the command output.
+#
+
+#------------------------------------------------------------------------------#
+# Constans and Global variables parsing Functions                              #
+#------------------------------------------------------------------------------#
+COUNT=1
+HEADERS="False"
+
+# THE DEFAULTS INITIALIZATION - OPTIONALS
+_arg_pretty="off"
+_arg_quiet="off"
+_arg_device="wlan0"
+
+# set our path to 'iw' - enter "which iw" on the CLI if not sure usually "/sbin/iw" or "/usr/sbin/iw"
+IW=$(which iw)
+
+# List all of our Wi-Fi channels to lookup from the frequency we gather in the output of the "iw" scan command
+declare -A CHANNELS=(
+['2412']='1'
+['2417']='2'
+['2422']='3'
+['2427']='4'
+['2432']='5'
+['2437']='6'
+['2442']='7'
+['2447']='8'
+['2452']='9'
+['2457']='10'
+['2462']='11'
+['2467']='12'
+['2472']='13'
+['5180']='36'
+['5200']='40'
+['5220']='44'
+['5240']='48'
+['5260']='52'
+['5280']='56'
+['5300']='60'
+['5320']='64'
+['5500']='100'
+['5520']='104'
+['5540']='108'
+['5560']='112'
+['5580']='116'
+['5600']='120'
+['5620']='124'
+['5640']='128'
+['5660']='132'
+['5680']='136'
+['5700']='140'
+['5720']='144'
+['5745']='149'
+['5765']='153'
+['5785']='157'
+['5805']='161'
+['5825']='165'
+)
+
+#------------------------------------------------------------------------------#
+# Command parsing Functions                                                    #
+#------------------------------------------------------------------------------#
+
+function die()
+{
+	local _ret=$2
+	test -n "$_ret" || _ret=1
+	test "$_PRINT_HELP" = yes && print_help >&2
+	echo "$1" >&2
+	exit ${_ret}
+}
+
+function begins_with_short_option()
+{
+	local first_option all_short_options
+	all_short_options='pqdh'
+	first_option="${1:0:1}"
+	test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
+}
+
+# Usage function
+function print_help()
+{
+		echo -e "Help Message"
+    echo -e "Usage: ${0} [-p|--(no-)pretty] [-q|--(no-)quiet] [-d|--device <arg>] [-h|--help]\n"
+		echo -e "Options:"
+		echo -e "\t-d | dev | --device\t: Change the device to be affected by the search"
+		echo -e "\t-h | --help\t\t: Show this help"
+		echo -e "\t-p | --pretty\t\t: Print headers before and after the printing"
+		echo -e "\t-q | --quiet\t\t: Make the execution quiet"
+    echo -e ""
+}
+
+parse_commandline ()
+{
+	while test $# -gt 0
+	do
+		_key="$1"
+		case "$_key" in
+			-p|--no-pretty|--pretty)
+				_arg_pretty="on"
+				test "${1:0:5}" = "--no-" && _arg_pretty="off"
+				;;
+			-p*)
+				_arg_pretty="on"
+				_next="${_key##-p}"
+				if test -n "$_next" -a "$_next" != "$_key"
+				then
+					begins_with_short_option "$_next" && shift && set -- "-p" "-${_next}" "$@" || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+				fi
+				;;
+			-q|--no-quiet|--quiet)
+				_arg_quiet="on"
+				test "${1:0:5}" = "--no-" && _arg_quiet="off"
+				;;
+			-q*)
+				_arg_quiet="on"
+				_next="${_key##-q}"
+				if test -n "$_next" -a "$_next" != "$_key"
+				then
+					begins_with_short_option "$_next" && shift && set -- "-q" "-${_next}" "$@" || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+				fi
+				;;
+			-d|--device)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_device="$2"
+				shift
+				;;
+			--device=*)
+				_arg_device="${_key##--device=}"
+				;;
+			-d*)
+				_arg_device="${_key##-d}"
+				;;
+			-h|--help)
+				print_help
+				exit 0
+				;;
+			-h*)
+				print_help
+				exit 0
+				;;
+			*)
+				_PRINT_HELP=yes die "FATAL ERROR: Got an unexpected argument '$1'" 1
+				;;
+		esac
+		shift
+	done
+}
+
+#------------------------------------------------------------------------------#
+# Main Functions                                                             #
+#------------------------------------------------------------------------------#
+
+function quiet_echo()
+{
+	if ! [[ "${_arg_quiet}" == "on" ]]; then
+		echo -e "$@"
+	fi
+}
+
+function check_interface()
+{
+	# Checking that the interface is on
+	if ! { ip link show dev "${_arg_device}" | grep "state UP"; } >/dev/null 2>&1; then
+		# we reload the wifi and everything
+		quiet_echo -e "${_arg_device} was down. Reactivating it."
+		ip addr flush dev "${_arg_device}"
+		ip link set dev "${_arg_device}" up
+		dhcpcd  -n "$_arg_device" >/dev/null 2>&1 # reload configuration and rebind the interface
+		quiet_echo -e "${_arg_device} is now up."
+	fi
+}
+
+function print_result()
+{
+	# Set IFS to ensure grep output split only at line end on for statement
+	IFS='
+	'
+	# capture grep output in "iw" scan command in to array
+	quiet_echo "Scanning device ${_arg_device} ..."
+	IW_COMMAND=( `sudo $IW dev $_arg_device scan | grep -o 'BSS ..\:..\:..:..\:..\:..\|SSID: .*\|signal\: .* \|freq\: .*'` )
+
+	# print headers (unless csv output required)
+	if [[ "$_arg_pretty" == "on" ]]
+	then
+	  echo "BSSID              RSSI     CH    Freq    SSID"
+	  echo "                   (dBm)          (Mhz)"
+	  echo "==============================================================="
+	fi
+
+
+	# Read through grep output from "iw" scan command
+	for line in "${IW_COMMAND[@]}"
+	do
+	  # set IFS to space & tab
+	  IFS=" 	"
+
+	  # first field should be BSS
+	  if [[ $line =~ BSS ]]
+	  then
+	    bss_array=( $line )
+	    bssid=${bss_array[1]}
+	  fi
+
+	  # second field should be freq:
+	  if [[ $line =~ "freq:" ]]
+	  then
+	    freq_array=( $line )
+	    freq=${freq_array[1]}
+	  fi
+
+	  # third field should be signal:
+	  if [[ $line =~ "signal:" ]]
+	  then
+	    signal_array=( $line )
+	    rssi=${signal_array[1]}
+	  fi
+
+	  # fourth field should be SSID
+	  if [[ $line =~ "SSID" ]]
+	  then
+	    ssid_array=( $line )
+	    # get rid of first array element so that we can print whole array, leaving just SSID name which may have spaces
+	    unset ssid_array[0]
+	    ssid=${ssid_array[@]}
+	  fi
+
+	  # Every 4th line we have all the input we need to write out the data
+	  if [ $COUNT -eq 4 ]; then
+	     channel=$(printf '%3s' "${CHANNELS[$freq]}")
+	     echo "$bssid  $rssi  $channel    $freq    $ssid"
+
+	    COUNT=0
+
+	    # clear all arrays and variable for the next while loop run
+	    ssid_array=()
+	    signal_array=()
+	    freq_array=()
+	    bss_array=()
+	    grep_output=()
+
+	    bssid=''
+	    ssid=''
+	    freq=''
+	    rssi=''
+	    channel=''
+
+	  fi
+
+	  ((COUNT++))
+
+	done | sort -k2
+
+	if [[ "$_arg_pretty" == "on" ]]
+	  then
+	    echo "==============================================================="
+	    echo
+	fi
+}
+
+
+
+
+
+#------------------------------------------------------------------------------#
+# Main body                                                                    #
+#------------------------------------------------------------------------------#
+
+parse_commandline "$@"
+check_interface
+print_result
+quiet_echo "Done"
