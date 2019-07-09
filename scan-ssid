@@ -191,7 +191,10 @@ function scan_available_networks()  # <device_name>
 	# capture grep output in "iw" scan command in to array
 	quiet_echo "Scanning networks available for ${_DEVICE} ..."
 	IW_COMMAND=( `sudo $IW dev $_DEVICE scan | grep -o 'BSS ..\:..\:..:..\:..\:..\|SSID: .*\|signal\: .* \|freq\: .*'` )
+}
 
+function display_networks_classic()
+{
 	# print headers (unless csv output required)
 	if [[ "$_arg_pretty" == "on" ]]
 	then
@@ -285,4 +288,11 @@ DEVICE_NAME=${_positionals[0]}
 
 check_interface $DEVICE_NAME
 scan_available_networks $DEVICE_NAME
-quiet_echo "Done"
+
+if [[ ! -z $IW_COMMAND ]]; then
+	display_networks_classic
+else
+	echo "No Network found"
+fi
+	quiet_echo "Done"
+	exit 0
