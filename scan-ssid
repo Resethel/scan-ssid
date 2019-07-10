@@ -162,7 +162,7 @@ assign_positional_args ()
 }
 
 #------------------------------------------------------------------------------#
-# Main Functions                                                             #
+# Main Functions                                                               #
 #------------------------------------------------------------------------------#
 
 function quiet_echo()
@@ -177,7 +177,8 @@ function check_interface() # <device_name>
 	# Checking that the interface is on
 	if ! { ip link show dev "$1" | grep "state UP"; } >/dev/null 2>&1; then
 		# we reload the wifi and everything
-		quiet_echo -e "$1 is down. Please reactivate it first"
+		quiet_echo -e "Interface $1 is down."
+		quiet_echo -e "Try running the command: \"sudo ip link set dev ${1} up\""
 		exit 1
 	fi
 }
